@@ -70,7 +70,7 @@ export default function TicketList() {
               </button>
 
               <a
-               href={`/ticket/${ticket.ticket_uuid}`}
+               href={`/dashboard/tickets/${ticket.ticket_uuid}`}
                 target="_blank"
                 className="flex items-center gap-2 rounded-2xl bg-green-600 px-4 py-3 text-sm font-bold text-white"
               >

@@ -39,9 +39,9 @@ export async function getTicket(id: number | string) {
 |--------------------------------------------------------------------------
 */
 
-export async function verifyTicket(ticketCode: string) {
-  const res = await api.post("/api/tickets/verify", {
-    ticket_code: ticketCode,
+export async function verifyTicket(ticketUuid: string) {
+  const res = await api.post("/api/verify-ticket", {
+    ticket_uuid: ticketUuid,
   });
 
   return res.data.data;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Html5Qrcode } from "html5-qrcode";
 import toast from "react-hot-toast";
 import Card from "@/components/ui/Card";
@@ -21,6 +21,15 @@ export default function QRVerifier() {
   const [result, setResult] = useState<any>(null);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
 
+  async function stopScanner() {
+    if (scannerRef.current) {
+      await scannerRef.current.stop().catch(() => {});
+      scannerRef.current = null;
+    }
+
+    setScanning(false);
+  }
+
   async function startScanner() {
     try {
       setResult(null);
@@ -33,8 +42,7 @@ export default function QRVerifier() {
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 260, height: 260 } },
         async (decodedText) => {
-          await scanner.stop();
-          setScanning(false);
+          await stopScanner();
 
           const ticketUuid = extractUuid(decodedText);
 
@@ -57,21 +65,6 @@ export default function QRVerifier() {
       toast.error("Unable to start camera");
     }
   }
-
-  async function stopScanner() {
-    if (scannerRef.current) {
-      await scannerRef.current.stop().catch(() => {});
-      scannerRef.current = null;
-    }
-
-    setScanning(false);
-  }
-
-  useEffect(() => {
-    return () => {
-      stopScanner();
-    };
-  }, []);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
@@ -127,7 +120,9 @@ export default function QRVerifier() {
           <div className="mt-4 space-y-3">
             <h2 className="text-4xl font-black text-red-600">Rejected</h2>
             <p className="text-sm text-gray-700">
-              Ticket is invalid, already used, revoked, or expired.
+              {result?.used_at
+                ? `Already used at ${result.used_at}`
+                : "Ticket is invalid, revoked, expired, or already used."}
             </p>
           </div>
         )}
