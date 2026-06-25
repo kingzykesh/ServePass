@@ -1,17 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
 import Textarea from "@/components/ui/Textarea";
-import { createEvent } from "@/services/events";
+import { createEvent, updateEvent } from "@/services/events";
 
 export default function EventForm({
+  event,
   onSuccess,
 }: {
+  event?: any;
   onSuccess: () => void;
 }) {
+  const isEdit = Boolean(event);
   const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({
@@ -22,6 +25,18 @@ export default function EventForm({
     end_date: "",
   });
 
+  useEffect(() => {
+    if (event) {
+      setForm({
+        title: event.title ?? "",
+        description: event.description ?? "",
+        location: event.location ?? "",
+        start_date: event.start_date ?? "",
+        end_date: event.end_date ?? "",
+      });
+    }
+  }, [event]);
+
   function updateField(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
@@ -30,20 +45,30 @@ export default function EventForm({
     try {
       setLoading(true);
 
-      await createEvent(form);
+      if (isEdit) {
+        await updateEvent(event.id, form);
+        toast.success("Event updated successfully");
+      } else {
+        await createEvent(form);
+        toast.success("Event created successfully");
+      }
 
-      toast.success("Event created successfully");
       onSuccess();
 
-      setForm({
-        title: "",
-        description: "",
-        location: "",
-        start_date: "",
-        end_date: "",
-      });
+      if (!isEdit) {
+        setForm({
+          title: "",
+          description: "",
+          location: "",
+          start_date: "",
+          end_date: "",
+        });
+      }
     } catch (err: any) {
-      toast.error(err?.response?.data?.message ?? "Failed to create event");
+      toast.error(
+        err?.response?.data?.message ??
+          (isEdit ? "Failed to update event" : "Failed to create event")
+      );
     } finally {
       setLoading(false);
     }
@@ -89,7 +114,7 @@ export default function EventForm({
       </div>
 
       <Button loading={loading} onClick={submit}>
-        Create Event
+        {isEdit ? "Update Event" : "Create Event"}
       </Button>
     </div>
   );

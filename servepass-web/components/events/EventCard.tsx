@@ -2,27 +2,34 @@ import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
 import { CalendarDays, MapPin, Pencil, Trash2 } from "lucide-react";
 
+function getStatus(event: any) {
+  const today = new Date();
+  const start = new Date(event.start_date);
+  const end = new Date(event.end_date);
+
+  if (today < start) return "Upcoming";
+  if (today >= start && today <= end) return "Ongoing";
+  return "Completed";
+}
+
 export default function EventCard({
   event,
   onEdit,
   onDelete,
 }: {
   event: any;
-  onEdit?: () => void;
-  onDelete?: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
 }) {
+  const attendance = Number(event.attendance_rate ?? 0);
+
   return (
     <Card className="border border-gray-100 bg-white p-6 transition hover:-translate-y-1 hover:shadow-md">
       <div className="space-y-5">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-xl font-black text-gray-950">
-              {event.title}
-            </h3>
-
-            <div className="mt-3">
-              <Badge>Upcoming</Badge>
-            </div>
+        <div>
+          <h3 className="text-xl font-black text-gray-950">{event.title}</h3>
+          <div className="mt-3">
+            <Badge>{getStatus(event)}</Badge>
           </div>
         </div>
 
@@ -33,9 +40,7 @@ export default function EventCard({
         <div className="space-y-3 text-sm text-gray-600">
           <div className="flex items-center gap-2">
             <CalendarDays size={16} className="text-green-600" />
-            <span>
-              {event.start_date} - {event.end_date}
-            </span>
+            <span>{event.start_date} - {event.end_date}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -45,26 +50,28 @@ export default function EventCard({
         </div>
 
         <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-4">
-          <div>
-            <p className="text-xs text-gray-500">Sessions</p>
-            <p className="mt-1 text-lg font-black text-gray-950">0</p>
-          </div>
+          <Stat label="Sessions" value={event.sessions_count ?? 0} />
+          <Stat label="Tickets" value={event.tickets_count ?? 0} />
+          <Stat label="Used" value={event.used_count ?? 0} />
+        </div>
 
-          <div>
-            <p className="text-xs text-gray-500">Tickets</p>
-            <p className="mt-1 text-lg font-black text-gray-950">0</p>
+        <div>
+          <div className="mb-2 flex justify-between text-xs font-bold text-gray-500">
+            <span>Attendance</span>
+            <span>{attendance}%</span>
           </div>
-
-          <div>
-            <p className="text-xs text-gray-500">Used</p>
-            <p className="mt-1 text-lg font-black text-gray-950">0</p>
+          <div className="h-3 rounded-full bg-gray-100">
+            <div
+              className="h-3 rounded-full bg-green-600"
+              style={{ width: `${attendance}%` }}
+            />
           </div>
         </div>
 
         <div className="flex gap-3">
           <button
             onClick={onEdit}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-green-200 bg-green-50 py-3 text-sm font-bold text-green-700 transition hover:bg-green-100"
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-green-200 bg-green-50 py-3 text-sm font-bold text-green-700"
           >
             <Pencil size={16} />
             Edit
@@ -72,7 +79,7 @@ export default function EventCard({
 
           <button
             onClick={onDelete}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-500 py-3 text-sm font-bold text-white transition hover:bg-red-600"
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-500 py-3 text-sm font-bold text-white"
           >
             <Trash2 size={16} />
             Delete
@@ -80,5 +87,14 @@ export default function EventCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: any }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className="mt-1 text-lg font-black text-gray-950">{value}</p>
+    </div>
   );
 }
