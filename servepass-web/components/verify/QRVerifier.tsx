@@ -15,31 +15,56 @@ function extractUuid(value: string) {
   return match ? match[0] : value;
 }
 
-function playBeep(type: "success" | "warning" | "error") {
+function playScannerSound(status: "VALID" | "USED" | "REJECTED") {
   const AudioContextClass =
     window.AudioContext || (window as any).webkitAudioContext;
 
   const audioCtx = new AudioContextClass();
-  const oscillator = audioCtx.createOscillator();
-  const gainNode = audioCtx.createGain();
 
-  oscillator.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
+  function tone(
+    frequency: number,
+    duration: number,
+    type: OscillatorType = "square",
+    volume = 1
+  ) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
 
-  if (type === "success") oscillator.frequency.value = 880;
-  if (type === "warning") oscillator.frequency.value = 520;
-  if (type === "error") oscillator.frequency.value = 220;
+    osc.type = type;
+    osc.frequency.value = frequency;
 
-  oscillator.type = "sine";
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
 
-  gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
-  gainNode.gain.exponentialRampToValueAtTime(
-    0.001,
-    audioCtx.currentTime + 0.25
-  );
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      audioCtx.currentTime + duration
+    );
 
-  oscillator.start(audioCtx.currentTime);
-  oscillator.stop(audioCtx.currentTime + 0.25);
+    osc.start(audioCtx.currentTime);
+    osc.stop(audioCtx.currentTime + duration);
+  }
+
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+
+  if (status === "VALID") {
+    tone(1450, 0.18, "square", 1);
+  }
+
+  if (status === "USED") {
+    tone(950, 0.12, "square", 1);
+
+    setTimeout(() => {
+      tone(950, 0.12, "square", 1);
+    }, 170);
+  }
+
+  if (status === "REJECTED") {
+    tone(250, 0.55, "sawtooth", 1);
+  }
 }
 
 export default function QRVerifier() {
@@ -78,7 +103,7 @@ export default function QRVerifier() {
 
             setResult(data);
             setStatus("success");
-            playBeep("success");
+            playScannerSound("VALID");
             toast.success("Ticket verified");
           } catch (err: any) {
             const message =
@@ -88,9 +113,9 @@ export default function QRVerifier() {
             setStatus("error");
 
             if (message.toLowerCase().includes("already used")) {
-              playBeep("warning");
+              playScannerSound("USED");
             } else {
-              playBeep("error");
+              playScannerSound("REJECTED");
             }
 
             toast.error(message);
@@ -101,7 +126,7 @@ export default function QRVerifier() {
 
       setScanning(true);
     } catch {
-      playBeep("error");
+      playScannerSound("REJECTED");
       toast.error("Unable to start camera");
     }
   }
