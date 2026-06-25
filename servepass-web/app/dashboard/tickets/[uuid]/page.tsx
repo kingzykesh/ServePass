@@ -2,51 +2,38 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import {
-  ArrowLeft,
-  Printer,
-  Download,
-  QrCode,
-  Calendar,
-  MapPin,
-  Clock,
-  User,
-  BadgeCheck,
-} from "lucide-react";
-
 import Link from "next/link";
-
-import { api } from "@/lib/api";
+import { QRCodeCanvas } from "qrcode.react";
+import { ArrowLeft, ExternalLink, Printer } from "lucide-react";
 
 import DashboardLayout from "@/components/layout/DashboardLayout";
 import Card from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
+import { api } from "@/lib/api";
 
 export default function TicketDetailsPage() {
   const { uuid } = useParams();
-
   const [ticket, setTicket] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadTicket();
-  }, []);
-
-  async function loadTicket() {
-    try {
-      const res = await api.get(`/api/public/ticket/${uuid}`);
-      setTicket(res.data.data);
-    } finally {
-      setLoading(false);
+    async function loadTicket() {
+      try {
+        const res = await api.get(`/api/public/ticket/${uuid}`);
+        setTicket(res.data.data);
+      } finally {
+        setLoading(false);
+      }
     }
-  }
+
+    loadTicket();
+  }, [uuid]);
 
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="py-20 text-center text-gray-500">
-          Loading ticket...
-        </div>
+        <p className="text-sm text-gray-600">Loading ticket...</p>
       </DashboardLayout>
     );
   }
@@ -54,213 +41,104 @@ export default function TicketDetailsPage() {
   if (!ticket) {
     return (
       <DashboardLayout>
-        <div className="py-20 text-center">
-          <h2 className="text-3xl font-black">
-            Ticket not found
-          </h2>
-        </div>
+        <Card className="p-8 text-center">
+          <h1 className="text-2xl font-black text-gray-950">Ticket not found</h1>
+        </Card>
       </DashboardLayout>
     );
   }
 
+  const ticketUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/ticket/${ticket.ticket_uuid}`
+      : ticket.qr_payload;
+
   return (
     <DashboardLayout>
-
-      <div className="mx-auto max-w-6xl space-y-6">
-
-        {/* Header */}
-
+      <div className="mx-auto max-w-md space-y-5">
         <div className="flex items-center justify-between">
-
           <Link
             href="/dashboard/tickets"
-            className="flex items-center gap-2 text-gray-600 hover:text-black"
+            className="flex items-center gap-2 text-sm font-bold text-gray-700"
           >
             <ArrowLeft size={18} />
             Back
           </Link>
 
-          <div className="flex gap-3">
+          <a
+            href={`/ticket/${ticket.ticket_uuid}`}
+            target="_blank"
+            className="flex items-center gap-2 rounded-2xl bg-green-600 px-4 py-3 text-sm font-bold text-white"
+          >
+            <ExternalLink size={16} />
+            Public Ticket
+          </a>
+        </div>
 
-            <button
-              onClick={() => window.print()}
-              className="flex items-center gap-2 rounded-xl border px-5 py-3 font-semibold"
-            >
-              <Printer size={18} />
-              Print
-            </button>
-
-            <a
-              href={`/ticket/${ticket.ticket_uuid}`}
-              target="_blank"
-              className="flex items-center gap-2 rounded-xl bg-green-600 px-5 py-3 font-semibold text-white"
-            >
-              <Download size={18} />
-              Public Ticket
-            </a>
-
+        <Card className="overflow-hidden p-0">
+          <div className="bg-green-600 p-6 text-white">
+            <p className="text-sm font-semibold uppercase tracking-widest">
+              ServePass
+            </p>
+            <h1 className="mt-2 text-3xl font-black">Meal Ticket</h1>
           </div>
 
-        </div>
-
-        <div className="grid gap-8 lg:grid-cols-2">
-
-          {/* Left */}
-
-          <Card className="space-y-6">
-
-            <div className="flex justify-between">
-
-              <div>
-
-                <h2 className="text-3xl font-black">
-                  {ticket.ticket_code}
-                </h2>
-
-                <p className="text-gray-500">
-                  Ticket Code
-                </p>
-
-              </div>
-
+          <div className="space-y-6 p-6">
+            <div className="flex items-center justify-between">
               <Badge>{ticket.status}</Badge>
-
+              <p className="text-sm font-bold text-gray-600">
+                {ticket.ticket_code}
+              </p>
             </div>
 
-            <div className="rounded-3xl bg-slate-50 p-10 flex justify-center">
+            <div className="flex justify-center rounded-3xl bg-slate-50 p-6">
+              <QRCodeCanvas value={ticketUrl} size={220} />
+            </div>
 
-              <img
-                src={ticket.qr_image}
-                alt="QR Code"
-                className="w-72"
+            <div>
+              <p className="text-xs font-bold uppercase text-gray-500">
+                Ticket Holder
+              </p>
+              <h2 className="mt-1 text-2xl font-black text-gray-950">
+                {ticket.holder_name}
+              </h2>
+              <p className="mt-1 text-sm font-medium text-gray-600">
+                {ticket.matric_number || "No matric number"}
+              </p>
+            </div>
+
+            <div className="grid gap-4 rounded-3xl bg-slate-50 p-5">
+              <Info label="Event" value={ticket.event_title} />
+              <Info label="Meal Session" value={ticket.meal_session_title} />
+              <Info label="Location" value={ticket.location} />
+              <Info
+                label="Time"
+                value={`${ticket.start_time} - ${ticket.end_time}`}
               />
-
             </div>
 
-          </Card>
+            <Button onClick={() => window.print()}>
+              <span className="flex items-center justify-center gap-2">
+                <Printer size={16} />
+                Print Ticket
+              </span>
+            </Button>
 
-          {/* Right */}
-
-          <Card className="space-y-6">
-
-            <div className="flex items-center gap-3">
-
-              <User />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Ticket Holder
-                </p>
-
-                <h3 className="text-2xl font-bold">
-                  {ticket.holder_name}
-                </h3>
-
-              </div>
-
-            </div>
-
-            <div className="flex items-center gap-3">
-
-              <BadgeCheck />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Matric Number
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.matric_number || "-"}
-                </p>
-
-              </div>
-
-            </div>
-
-            <div className="flex items-center gap-3">
-
-              <Calendar />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Event
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.event_title}
-                </p>
-
-              </div>
-
-            </div>
-
-            <div className="flex items-center gap-3">
-
-              <QrCode />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Meal Session
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.meal_session_title}
-                </p>
-
-              </div>
-
-            </div>
-
-            <div className="flex items-center gap-3">
-
-              <MapPin />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Location
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.location}
-                </p>
-
-              </div>
-
-            </div>
-
-            <div className="flex items-center gap-3">
-
-              <Clock />
-
-              <div>
-
-                <p className="text-sm text-gray-500">
-                  Serving Time
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.start_time}
-                </p>
-
-                <p className="font-semibold">
-                  {ticket.end_time}
-                </p>
-
-              </div>
-
-            </div>
-
-          </Card>
-
-        </div>
-
+            <p className="text-center text-sm text-gray-500">
+              Present this ticket at the meal point for verification.
+            </p>
+          </div>
+        </Card>
       </div>
-
     </DashboardLayout>
+  );
+}
+
+function Info({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-gray-500">{label}</p>
+      <p className="font-bold text-gray-950">{value}</p>
+    </div>
   );
 }

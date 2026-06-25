@@ -15,6 +15,33 @@ function extractUuid(value: string) {
   return match ? match[0] : value;
 }
 
+function playBeep(type: "success" | "warning" | "error") {
+  const AudioContextClass =
+    window.AudioContext || (window as any).webkitAudioContext;
+
+  const audioCtx = new AudioContextClass();
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+
+  if (type === "success") oscillator.frequency.value = 880;
+  if (type === "warning") oscillator.frequency.value = 520;
+  if (type === "error") oscillator.frequency.value = 220;
+
+  oscillator.type = "sine";
+
+  gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(
+    0.001,
+    audioCtx.currentTime + 0.25
+  );
+
+  oscillator.start(audioCtx.currentTime);
+  oscillator.stop(audioCtx.currentTime + 0.25);
+}
+
 export default function QRVerifier() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -48,13 +75,25 @@ export default function QRVerifier() {
 
           try {
             const data = await verifyTicket(ticketUuid);
+
             setResult(data);
             setStatus("success");
+            playBeep("success");
             toast.success("Ticket verified");
           } catch (err: any) {
+            const message =
+              err?.response?.data?.message ?? "Verification failed";
+
             setResult(err?.response?.data?.data ?? null);
             setStatus("error");
-            toast.error(err?.response?.data?.message ?? "Verification failed");
+
+            if (message.toLowerCase().includes("already used")) {
+              playBeep("warning");
+            } else {
+              playBeep("error");
+            }
+
+            toast.error(message);
           }
         },
         () => {}
@@ -62,6 +101,7 @@ export default function QRVerifier() {
 
       setScanning(true);
     } catch {
+      playBeep("error");
       toast.error("Unable to start camera");
     }
   }
@@ -108,17 +148,21 @@ export default function QRVerifier() {
         ) : status === "success" ? (
           <div className="mt-4 space-y-3">
             <h2 className="text-4xl font-black text-green-700">Verified</h2>
+
             <p className="text-lg font-bold text-gray-950">
               {result?.holder_name}
             </p>
+
             <p className="text-sm text-gray-600">
               {result?.event} • {result?.meal_session}
             </p>
+
             <p className="text-sm text-gray-600">{result?.ticket_code}</p>
           </div>
         ) : (
           <div className="mt-4 space-y-3">
             <h2 className="text-4xl font-black text-red-600">Rejected</h2>
+
             <p className="text-sm text-gray-700">
               {result?.used_at
                 ? `Already used at ${result.used_at}`
