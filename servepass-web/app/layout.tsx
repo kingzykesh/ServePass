@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ServePass — QR Meal Ticket Management",
+  title: "MealPass — QR Meal Ticket Management",
   description: "Generate, print, distribute, and verify QR meal tickets.",
 };
 

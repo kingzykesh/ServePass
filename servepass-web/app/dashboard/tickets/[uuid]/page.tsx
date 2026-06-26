@@ -78,7 +78,7 @@ export default function TicketDetailsPage() {
         <Card className="overflow-hidden p-0">
           <div className="bg-green-600 p-6 text-white">
             <p className="text-sm font-semibold uppercase tracking-widest">
-              ServePass
+              MealPass
             </p>
             <h1 className="mt-2 text-3xl font-black">Meal Ticket</h1>
           </div>

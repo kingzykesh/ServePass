@@ -29,7 +29,7 @@ export default function DashboardLayout({
   if (!ready) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-slate-50">
-        <p className="text-sm text-gray-500">Loading ServePass...</p>
+        <p className="text-sm text-gray-500">Loading MealPass...</p>
       </main>
     );
   }

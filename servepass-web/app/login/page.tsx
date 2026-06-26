@@ -40,7 +40,7 @@ export default function LoginPage() {
         <div className="grid w-full max-w-6xl gap-10 lg:grid-cols-2 lg:items-center">
           <section className="text-center lg:text-left">
             <p className="mb-3 text-sm font-semibold uppercase tracking-[0.25em] text-green-700">
-              ServePass
+              MealPass
             </p>
 
             <h1 className="text-4xl font-black leading-tight text-gray-950 sm:text-5xl lg:text-6xl">

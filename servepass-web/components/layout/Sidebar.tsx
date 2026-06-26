@@ -36,7 +36,7 @@ export default function Sidebar({
       >
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-950">ServePass</h1>
+            <h1 className="text-xl font-bold text-gray-950">MealPass</h1>
             <p className="text-xs text-gray-500">Meal access platform</p>
           </div>
 
