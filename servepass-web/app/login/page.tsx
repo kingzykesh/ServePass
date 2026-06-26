@@ -57,7 +57,7 @@ export default function LoginPage() {
 
           <Card className="mx-auto w-full max-w-md p-6 sm:p-8">
             <div className="mb-8 text-center">
-              <h2 className="text-3xl font-black text-gray-950">ServePass</h2>
+              <h2 className="text-3xl font-black text-gray-950">MealPass</h2>
               <p className="mt-2 text-sm text-gray-500">
                 Login to your organization dashboard
               </p>
