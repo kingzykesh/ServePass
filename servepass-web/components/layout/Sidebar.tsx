@@ -8,6 +8,7 @@ const navItems = [
   { name: "Events", href: "/dashboard/events", icon: CalendarDays },
   { name: "Meal Sessions", href: "/dashboard/meal-sessions", icon: Soup },
   { name: "Tickets", href: "/dashboard/tickets", icon: Ticket },
+  { name: "Armbands", href: "/dashboard/tickets/armbands", icon: Ticket },
   { name: "Verify", href: "/dashboard/verify", icon: ScanLine },
   { name: "Reports", href: "/dashboard/reports", icon: BarChart3 },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
