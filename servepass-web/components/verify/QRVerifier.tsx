@@ -28,7 +28,7 @@ type VerificationStatus =
   | "used"
   | "error";
 
-type ScannerCapabilities = MediaTrackCapabilities & {
+type CameraCapabilities = MediaTrackCapabilities & {
   zoom?: {
     min?: number;
     max?: number;
@@ -38,7 +38,11 @@ type ScannerCapabilities = MediaTrackCapabilities & {
   torch?: boolean;
 };
 
-type AdvancedCameraConstraint = MediaTrackConstraintSet & {
+type CameraSettings = MediaTrackSettings & {
+  zoom?: number;
+};
+
+type CameraConstraint = MediaTrackConstraintSet & {
   zoom?: number;
   focusMode?: string;
   torch?: boolean;
@@ -60,15 +64,17 @@ function playScannerSound(
   try {
     const AudioContextClass =
       window.AudioContext ||
-      (window as typeof window & {
-        webkitAudioContext?: typeof AudioContext;
-      }).webkitAudioContext;
+      (
+        window as typeof window & {
+          webkitAudioContext?: typeof AudioContext;
+        }
+      ).webkitAudioContext;
 
     if (!AudioContextClass) return;
 
     const audioContext = new AudioContextClass();
 
-    function tone(
+    function playTone(
       frequency: number,
       duration: number,
       delay = 0,
@@ -77,46 +83,91 @@ function playScannerSound(
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
 
-      const startAt = audioContext.currentTime + delay;
-      const endAt = startAt + duration;
+      const startTime = audioContext.currentTime + delay;
+      const endTime = startTime + duration;
 
       oscillator.type = oscillatorType;
-      oscillator.frequency.setValueAtTime(frequency, startAt);
+      oscillator.frequency.setValueAtTime(
+        frequency,
+        startTime
+      );
 
       oscillator.connect(gain);
       gain.connect(audioContext.destination);
 
-      // 1 is the maximum Web Audio gain.
-      gain.gain.setValueAtTime(1, startAt);
-      gain.gain.exponentialRampToValueAtTime(0.001, endAt);
+      gain.gain.setValueAtTime(1, startTime);
+      gain.gain.exponentialRampToValueAtTime(
+        0.001,
+        endTime
+      );
 
-      oscillator.start(startAt);
-      oscillator.stop(endAt);
+      oscillator.start(startTime);
+      oscillator.stop(endTime);
     }
 
     void audioContext.resume();
 
     if (sound === "VALID") {
-      tone(1450, 0.16);
-      tone(1750, 0.18, 0.17);
+      playTone(1450, 0.16);
+      playTone(1800, 0.18, 0.17);
     }
 
     if (sound === "USED") {
-      tone(850, 0.16);
-      tone(850, 0.16, 0.22);
-      tone(850, 0.16, 0.44);
+      playTone(850, 0.16);
+      playTone(850, 0.16, 0.22);
+      playTone(850, 0.16, 0.44);
     }
 
     if (sound === "REJECTED") {
-      tone(220, 0.65, 0, "sawtooth");
+      playTone(220, 0.65, 0, "sawtooth");
     }
 
     window.setTimeout(() => {
       void audioContext.close();
     }, 1500);
   } catch (error) {
-    console.warn("Scanner sound could not play:", error);
+    console.warn("Unable to play scanner sound:", error);
   }
+}
+
+function getFriendlyCameraError(error: unknown): string {
+  const rawMessage =
+    error instanceof Error
+      ? error.message
+      : String(error || "");
+
+  const message = rawMessage.toLowerCase();
+
+  if (
+    message.includes("permission") ||
+    message.includes("notallowederror")
+  ) {
+    return "Camera permission was denied. Allow camera access in your browser settings and reload the page.";
+  }
+
+  if (
+    message.includes("could not start video source") ||
+    message.includes("notreadableerror") ||
+    message.includes("track start")
+  ) {
+    return "The camera is currently unavailable. Close Camera, WhatsApp, Instagram or any app using the camera, then reload ServePass.";
+  }
+
+  if (
+    message.includes("notfounderror") ||
+    message.includes("requested device not found")
+  ) {
+    return "No usable camera was found on this device.";
+  }
+
+  if (
+    message.includes("facingmode") ||
+    message.includes("overconstrained")
+  ) {
+    return "The rear camera could not be selected. Reload the page and try again.";
+  }
+
+  return rawMessage || "Unable to start camera.";
 }
 
 export default function QRVerifier() {
@@ -125,13 +176,14 @@ export default function QRVerifier() {
 
   const [scanning, setScanning] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [result, setResult] = useState<any>(null);
 
   const [status, setStatus] =
     useState<VerificationStatus>("idle");
 
+  const [result, setResult] = useState<any>(null);
+
   const [message, setMessage] = useState(
-    "Position the printed QR inside the frame."
+    "Position the complete printed QR code inside the scanner frame."
   );
 
   const [torchSupported, setTorchSupported] =
@@ -144,80 +196,76 @@ export default function QRVerifier() {
     useState(false);
 
   const [zoom, setZoom] = useState(1);
-
   const [minimumZoom, setMinimumZoom] = useState(1);
   const [maximumZoom, setMaximumZoom] = useState(1);
   const [zoomStep, setZoomStep] = useState(0.25);
 
   async function stopScanner() {
-  const scanner = scannerRef.current;
+    const scanner = scannerRef.current;
 
-  if (!scanner) {
+    if (!scanner) {
+      setScanning(false);
+      setStarting(false);
+      return;
+    }
+
+    try {
+      if (scanner.isScanning) {
+        await scanner.stop();
+      }
+    } catch (error) {
+      console.warn("Scanner stop warning:", error);
+    }
+
+    try {
+      scanner.clear();
+    } catch (error) {
+      console.warn("Scanner clear warning:", error);
+    }
+
+    scannerRef.current = null;
+    processingRef.current = false;
+
     setScanning(false);
     setStarting(false);
-    return;
+    setTorchEnabled(false);
+    setTorchSupported(false);
+    setZoomSupported(false);
   }
-
-  try {
-    if (scanner.isScanning) {
-      await scanner.stop();
-    }
-  } catch (error) {
-    console.warn("Scanner stop warning:", error);
-  }
-
-  try {
-    scanner.clear();
-  } catch (error) {
-    console.warn("Scanner clear warning:", error);
-  }
-
-  scannerRef.current = null;
-  processingRef.current = false;
-
-  setScanning(false);
-  setStarting(false);
-  setTorchEnabled(false);
-  setTorchSupported(false);
-  setZoomSupported(false);
-}
 
   async function applyCameraEnhancements(
     scanner: Html5Qrcode
   ) {
     try {
       const capabilities =
-        scanner.getRunningTrackCapabilities() as ScannerCapabilities;
+        scanner.getRunningTrackCapabilities() as CameraCapabilities;
 
-      const settings = scanner.getRunningTrackSettings();
+      const settings =
+        scanner.getRunningTrackSettings() as CameraSettings;
 
-      const advanced: AdvancedCameraConstraint = {};
+      const advancedConstraint: CameraConstraint = {};
 
       if (
         Array.isArray(capabilities.focusMode) &&
         capabilities.focusMode.includes("continuous")
       ) {
-        advanced.focusMode = "continuous";
+        advancedConstraint.focusMode = "continuous";
       }
 
       if (capabilities.zoom) {
         const min = Number(capabilities.zoom.min ?? 1);
         const max = Number(capabilities.zoom.max ?? 1);
-        const step = Number(capabilities.zoom.step ?? 0.25);
+        const step = Number(
+          capabilities.zoom.step ?? 0.25
+        );
 
         setMinimumZoom(min);
         setMaximumZoom(max);
         setZoomStep(step > 0 ? step : 0.25);
         setZoomSupported(max > min);
 
-        /*
-         * Start with mild zoom only.
-         * Too much digital zoom can enlarge blur.
-         */
         const currentZoom = Number(
-          (settings as MediaTrackSettings & {
-            zoom?: number;
-          }).zoom ?? min
+          settings.zoom ?? min
         );
 
         const preferredZoom = Math.min(
@@ -225,7 +273,7 @@ export default function QRVerifier() {
           Math.max(min, currentZoom, 1.25)
         );
 
-        advanced.zoom = preferredZoom;
+        advancedConstraint.zoom = preferredZoom;
         setZoom(preferredZoom);
       }
 
@@ -233,20 +281,26 @@ export default function QRVerifier() {
         setTorchSupported(true);
       }
 
-      if (Object.keys(advanced).length > 0) {
+      if (
+        Object.keys(advancedConstraint).length > 0
+      ) {
         await scanner.applyVideoConstraints({
-          advanced: [advanced],
-        } as MediaTrackConstraints);
+          advanced: [
+            advancedConstraint as MediaTrackConstraintSet,
+          ],
+        });
       }
     } catch (error) {
       console.warn(
-        "This browser does not expose autofocus/zoom controls:",
+        "Camera enhancements are unavailable:",
         error
       );
     }
   }
 
-  async function verifyScannedValue(decodedText: string) {
+  async function verifyScannedValue(
+    decodedText: string
+  ) {
     if (processingRef.current) return;
 
     processingRef.current = true;
@@ -277,14 +331,13 @@ export default function QRVerifier() {
         .includes("already used");
 
       setResult(responseData);
+      setMessage(responseMessage);
 
       if (alreadyUsed) {
         setStatus("used");
-        setMessage(responseMessage);
         playScannerSound("USED");
       } else {
         setStatus("error");
-        setMessage(responseMessage);
         playScannerSound("REJECTED");
       }
 
@@ -294,106 +347,117 @@ export default function QRVerifier() {
     }
   }
 
- async function startScanner() {
-  if (starting || scanning) return;
+  async function startScanner() {
+    if (starting || scanning) return;
 
-  try {
-    await stopScanner();
+    try {
+      await stopScanner();
 
-    setStarting(true);
-    setResult(null);
-    setStatus("idle");
-    setMessage("Requesting camera access...");
+      setStarting(true);
+      setResult(null);
+      setStatus("idle");
+      setMessage("Starting rear camera...");
 
-    const cameras = await Html5Qrcode.getCameras();
+      const scanner = new Html5Qrcode(
+        "qr-reader",
+        {
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+          ],
+          verbose: false,
+        }
+      );
 
-    if (!cameras || cameras.length === 0) {
-      throw new Error("No camera was found on this device.");
-    }
+      scannerRef.current = scanner;
 
-    console.log("Available cameras:", cameras);
-
-    const rearCamera =
-      cameras.find((camera) =>
-        /back|rear|environment|world/i.test(camera.label)
-      ) ??
-      cameras[cameras.length - 1];
-
-    const scanner = new Html5Qrcode("qr-reader", {
-      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-      verbose: false,
-    });
-
-    scannerRef.current = scanner;
-
-    await scanner.start(
-      rearCamera.id,
-      {
-        fps: 8,
-        disableFlip: true,
-
-        qrbox: (
-          viewfinderWidth: number,
-          viewfinderHeight: number
-        ) => {
-          const smallestSide = Math.min(
-            viewfinderWidth,
-            viewfinderHeight
-          );
-
-          const size = Math.floor(smallestSide * 0.85);
-
-          return {
-            width: size,
-            height: size,
-          };
+      /*
+       * Your installed html5-qrcode version accepts
+       * either a string or an object containing `exact`.
+       */
+      await scanner.start(
+        {
+          facingMode: {
+            exact: "environment",
+          },
         },
-      },
-      async (decodedText) => {
-        await verifyScannedValue(decodedText);
-      },
-      () => {
-        // Ignore normal decode failures while focusing.
-      }
-    );
+        {
+          /*
+           * Lower decoding FPS gives the phone camera
+           * more time to focus on the small printed QR.
+           */
+          fps: 6,
 
-    setScanning(true);
-    setStarting(false);
-    setMessage(
-      "Hold the printed QR steady and slowly move the phone closer or farther."
-    );
+          /*
+           * A large scan region provides more QR pixels.
+           */
+          qrbox: (
+            viewfinderWidth: number,
+            viewfinderHeight: number
+          ) => {
+            const smallestSide = Math.min(
+              viewfinderWidth,
+              viewfinderHeight
+            );
 
-    window.setTimeout(() => {
-      if (
-        scannerRef.current === scanner &&
-        scanner.isScanning
-      ) {
-        void applyCameraEnhancements(scanner);
-      }
-    }, 1200);
-  } catch (error) {
-    console.error("Scanner start failed:", error);
+            const size = Math.floor(
+              smallestSide * 0.86
+            );
 
-    scannerRef.current = null;
-    setScanning(false);
-    setStarting(false);
-    setStatus("error");
+            return {
+              width: size,
+              height: size,
+            };
+          },
 
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "Unable to start camera";
+          disableFlip: true,
+        },
+        async (decodedText) => {
+          await verifyScannedValue(decodedText);
+        },
+        () => {
+          // Decode misses are normal while the camera focuses.
+        }
+      );
 
-    setMessage(errorMessage);
-    playScannerSound("REJECTED");
-    toast.error(errorMessage);
+      setScanning(true);
+      setStarting(false);
+
+      setMessage(
+        "Hold the armband steady. Begin slightly farther away and move closer slowly until the QR is sharp."
+      );
+
+      window.setTimeout(() => {
+        if (
+          scannerRef.current === scanner &&
+          scanner.isScanning
+        ) {
+          void applyCameraEnhancements(scanner);
+        }
+      }, 1000);
+    } catch (error) {
+      console.error("Scanner start failed:", error);
+
+      const friendlyMessage =
+        getFriendlyCameraError(error);
+
+      scannerRef.current = null;
+
+      setScanning(false);
+      setStarting(false);
+      setStatus("error");
+      setMessage(friendlyMessage);
+
+      playScannerSound("REJECTED");
+      toast.error(friendlyMessage);
+    }
   }
-}
 
   async function changeZoom(nextZoom: number) {
     const scanner = scannerRef.current;
 
-    if (!scanner || !scanner.isScanning) return;
+    if (!scanner || !scanner.isScanning) {
+      return;
+    }
 
     const safeZoom = Math.min(
       maximumZoom,
@@ -405,14 +469,16 @@ export default function QRVerifier() {
         advanced: [
           {
             zoom: safeZoom,
-          } as AdvancedCameraConstraint,
+          } as CameraConstraint,
         ],
       });
 
       setZoom(safeZoom);
     } catch (error) {
-      console.warn("Zoom could not be applied:", error);
-      toast.error("Zoom is not supported on this phone");
+      console.warn("Zoom failed:", error);
+      toast.error(
+        "Zoom control is unavailable on this device"
+      );
     }
   }
 
@@ -434,25 +500,29 @@ export default function QRVerifier() {
         advanced: [
           {
             torch: nextTorchState,
-          } as AdvancedCameraConstraint,
+          } as CameraConstraint,
         ],
       });
 
       setTorchEnabled(nextTorchState);
     } catch (error) {
-      console.warn("Torch could not be changed:", error);
-      toast.error("Torch control is unavailable");
+      console.warn("Torch failed:", error);
+      toast.error(
+        "Torch control is unavailable on this device"
+      );
     }
   }
 
   async function refocusCamera() {
     const scanner = scannerRef.current;
 
-    if (!scanner || !scanner.isScanning) return;
+    if (!scanner || !scanner.isScanning) {
+      return;
+    }
 
     try {
       const capabilities =
-        scanner.getRunningTrackCapabilities() as ScannerCapabilities;
+        scanner.getRunningTrackCapabilities() as CameraCapabilities;
 
       if (
         Array.isArray(capabilities.focusMode) &&
@@ -462,7 +532,7 @@ export default function QRVerifier() {
           advanced: [
             {
               focusMode: "single-shot",
-            } as AdvancedCameraConstraint,
+            } as CameraConstraint,
           ],
         });
 
@@ -470,13 +540,15 @@ export default function QRVerifier() {
           if (
             scannerRef.current === scanner &&
             scanner.isScanning &&
-            capabilities.focusMode?.includes("continuous")
+            capabilities.focusMode?.includes(
+              "continuous"
+            )
           ) {
             void scanner.applyVideoConstraints({
               advanced: [
                 {
                   focusMode: "continuous",
-                } as AdvancedCameraConstraint,
+                } as CameraConstraint,
               ],
             });
           }
@@ -486,11 +558,9 @@ export default function QRVerifier() {
         return;
       }
 
-      /*
-       * On devices without exposed single-shot focus,
-       * briefly changing zoom can sometimes trigger refocus.
-       */
       if (zoomSupported) {
+        const originalZoom = zoom;
+
         const temporaryZoom = Math.min(
           maximumZoom,
           zoom + zoomStep
@@ -499,17 +569,22 @@ export default function QRVerifier() {
         await changeZoom(temporaryZoom);
 
         window.setTimeout(() => {
-          void changeZoom(zoom);
-        }, 350);
+          void changeZoom(originalZoom);
+        }, 400);
 
         toast.success("Focus refreshed");
         return;
       }
 
-      toast("Move the phone back slightly, then approach slowly");
+      toast(
+        "Move the phone farther away, then approach the QR slowly"
+      );
     } catch (error) {
       console.warn("Refocus failed:", error);
-      toast("Move the phone back slightly, then approach slowly");
+
+      toast(
+        "Move the phone farther away, then approach the QR slowly"
+      );
     }
   }
 
@@ -532,7 +607,7 @@ export default function QRVerifier() {
           />
 
           {!scanning && (
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-slate-950 text-center text-white">
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-slate-950 px-6 text-center text-white">
               <div className="rounded-full bg-white/10 p-5">
                 <Camera size={38} />
               </div>
@@ -541,9 +616,9 @@ export default function QRVerifier() {
                 Scanner is ready
               </p>
 
-              <p className="mt-2 max-w-xs px-6 text-sm text-white/70">
-                Start the rear camera, then place the full
-                printed QR inside the frame.
+              <p className="mt-2 max-w-xs text-sm leading-6 text-white/70">
+                Start the rear camera, then place the
+                complete printed QR code inside the frame.
               </p>
             </div>
           )}
@@ -552,19 +627,22 @@ export default function QRVerifier() {
             <div className="pointer-events-none absolute inset-0">
               <div className="absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2">
                 <span className="absolute left-0 top-0 h-14 w-14 border-l-4 border-t-4 border-white" />
+
                 <span className="absolute right-0 top-0 h-14 w-14 border-r-4 border-t-4 border-white" />
+
                 <span className="absolute bottom-0 left-0 h-14 w-14 border-b-4 border-l-4 border-white" />
+
                 <span className="absolute bottom-0 right-0 h-14 w-14 border-b-4 border-r-4 border-white" />
               </div>
 
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/65 px-4 py-2 text-center text-xs font-bold text-white backdrop-blur">
-                Keep the armband steady
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur">
+                Keep the full QR inside the frame
               </div>
             </div>
           )}
         </div>
 
-        <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-center text-sm font-medium text-gray-600">
+        <p className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-center text-sm font-medium leading-6 text-gray-600">
           {message}
         </p>
 
@@ -582,7 +660,9 @@ export default function QRVerifier() {
             <button
               type="button"
               disabled={!zoomSupported}
-              onClick={() => changeZoom(zoom - zoomStep)}
+              onClick={() =>
+                changeZoom(zoom - zoomStep)
+              }
               className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ZoomOut size={17} />
@@ -592,7 +672,9 @@ export default function QRVerifier() {
             <button
               type="button"
               disabled={!zoomSupported}
-              onClick={() => changeZoom(zoom + zoomStep)}
+              onClick={() =>
+                changeZoom(zoom + zoomStep)
+              }
               className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ZoomIn size={17} />
@@ -627,6 +709,7 @@ export default function QRVerifier() {
           >
             <span className="flex items-center justify-center gap-2">
               <ScanLine size={18} />
+
               {starting
                 ? "Starting camera..."
                 : scanning
@@ -661,9 +744,8 @@ export default function QRVerifier() {
             </h2>
 
             <p className="mt-3 text-sm leading-6 text-gray-600">
-              For the printed armband, begin slightly farther
-              away and slowly move closer until the QR becomes
-              sharp.
+              Begin approximately 20–30 cm away from
+              the printed armband and approach it slowly.
             </p>
           </div>
         )}
@@ -723,8 +805,7 @@ export default function QRVerifier() {
             </h2>
 
             <p className="text-sm leading-6 text-gray-700">
-              {message ||
-                "The ticket is invalid, revoked, or expired."}
+              {message}
             </p>
           </div>
         )}
