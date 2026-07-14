@@ -162,24 +162,24 @@ export default function QRVerifier() {
     if (scanner.isScanning) {
       await scanner.stop();
     }
-
-    try {
-      scanner.clear();
-    } catch (error) {
-      console.warn("Scanner clear warning:", error);
-    }
   } catch (error) {
     console.warn("Scanner stop warning:", error);
-  } finally {
-    scannerRef.current = null;
-    processingRef.current = false;
-
-    setScanning(false);
-    setStarting(false);
-    setTorchEnabled(false);
-    setTorchSupported(false);
-    setZoomSupported(false);
   }
+
+  try {
+    scanner.clear();
+  } catch (error) {
+    console.warn("Scanner clear warning:", error);
+  }
+
+  scannerRef.current = null;
+  processingRef.current = false;
+
+  setScanning(false);
+  setStarting(false);
+  setTorchEnabled(false);
+  setTorchSupported(false);
+  setZoomSupported(false);
 }
 
   async function applyCameraEnhancements(
@@ -294,100 +294,101 @@ export default function QRVerifier() {
     }
   }
 
-  async function startScanner() {
-    if (starting || scanning) return;
+ async function startScanner() {
+  if (starting || scanning) return;
 
-    try {
-      await stopScanner();
+  try {
+    await stopScanner();
 
-      setStarting(true);
-      setResult(null);
-      setStatus("idle");
-      setMessage(
-        "Hold the armband steady and move the phone slowly until the QR becomes sharp."
-      );
+    setStarting(true);
+    setResult(null);
+    setStatus("idle");
+    setMessage("Requesting camera access...");
 
-      const scanner = new Html5Qrcode("qr-reader", {
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.QR_CODE,
-        ],
-        verbose: false,
-      });
+    const cameras = await Html5Qrcode.getCameras();
 
-      scannerRef.current = scanner;
-      
-await scanner.start(
-  {
-    facingMode: "environment",
-  },
-        {
-          /*
-           * Lower FPS gives autofocus more time to settle
-           * between decoding attempts.
-           */
-          fps: 6,
-
-          /*
-           * Use most of the visible frame, especially on mobile.
-           */
-          qrbox: (
-            viewfinderWidth: number,
-            viewfinderHeight: number
-          ) => {
-            const minimumSide = Math.min(
-              viewfinderWidth,
-              viewfinderHeight
-            );
-
-            const size = Math.floor(minimumSide * 0.86);
-
-            return {
-              width: size,
-              height: size,
-            };
-          },
-
-          disableFlip: true,
-          aspectRatio: 4 / 3,
-        },
-        async (decodedText) => {
-          await verifyScannedValue(decodedText);
-        },
-        () => {
-          // Decode misses are expected while focusing.
-        }
-      );
-
-      setScanning(true);
-      setStarting(false);
-
-      /*
-       * Let the video stream settle briefly before requesting
-       * focus and zoom constraints.
-       */
-      window.setTimeout(() => {
-        if (
-          scannerRef.current === scanner &&
-          scanner.isScanning
-        ) {
-          void applyCameraEnhancements(scanner);
-        }
-      }, 800);
-    } catch (error) {
-      console.error("Scanner start failed:", error);
-
-      scannerRef.current = null;
-      setScanning(false);
-      setStarting(false);
-      setStatus("error");
-      setMessage(
-        "Unable to start the rear camera. Check camera permission and reload the page."
-      );
-
-      playScannerSound("REJECTED");
-      toast.error("Unable to start camera");
+    if (!cameras || cameras.length === 0) {
+      throw new Error("No camera was found on this device.");
     }
+
+    console.log("Available cameras:", cameras);
+
+    const rearCamera =
+      cameras.find((camera) =>
+        /back|rear|environment|world/i.test(camera.label)
+      ) ??
+      cameras[cameras.length - 1];
+
+    const scanner = new Html5Qrcode("qr-reader", {
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      verbose: false,
+    });
+
+    scannerRef.current = scanner;
+
+    await scanner.start(
+      rearCamera.id,
+      {
+        fps: 8,
+        disableFlip: true,
+
+        qrbox: (
+          viewfinderWidth: number,
+          viewfinderHeight: number
+        ) => {
+          const smallestSide = Math.min(
+            viewfinderWidth,
+            viewfinderHeight
+          );
+
+          const size = Math.floor(smallestSide * 0.85);
+
+          return {
+            width: size,
+            height: size,
+          };
+        },
+      },
+      async (decodedText) => {
+        await verifyScannedValue(decodedText);
+      },
+      () => {
+        // Ignore normal decode failures while focusing.
+      }
+    );
+
+    setScanning(true);
+    setStarting(false);
+    setMessage(
+      "Hold the printed QR steady and slowly move the phone closer or farther."
+    );
+
+    window.setTimeout(() => {
+      if (
+        scannerRef.current === scanner &&
+        scanner.isScanning
+      ) {
+        void applyCameraEnhancements(scanner);
+      }
+    }, 1200);
+  } catch (error) {
+    console.error("Scanner start failed:", error);
+
+    scannerRef.current = null;
+    setScanning(false);
+    setStarting(false);
+    setStatus("error");
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Unable to start camera";
+
+    setMessage(errorMessage);
+    playScannerSound("REJECTED");
+    toast.error(errorMessage);
   }
+}
 
   async function changeZoom(nextZoom: number) {
     const scanner = scannerRef.current;
