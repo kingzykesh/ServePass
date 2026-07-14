@@ -1,25 +1,32 @@
 "use client";
 
-import { useRef, useState } from "react";
 import {
-  Html5Qrcode,
-  Html5QrcodeSupportedFormats,
-} from "html5-qrcode";
+  ChangeEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { BrowserQRCodeReader } from "@zxing/browser";
 import toast from "react-hot-toast";
 import {
   Camera,
+  CheckCircle2,
   Flashlight,
   FlashlightOff,
   Focus,
-  RotateCcw,
+  ImagePlus,
+  Loader2,
+  RefreshCcw,
   ScanLine,
   Square,
+  TriangleAlert,
+  XCircle,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 
 import Card from "@/components/ui/Card";
-import Button from "@/components/ui/Button";
 import { verifyTicket } from "@/services/tickets";
 
 type VerificationStatus =
@@ -28,24 +35,28 @@ type VerificationStatus =
   | "used"
   | "error";
 
-type CameraCapabilities = MediaTrackCapabilities & {
+type ScannerControls = {
+  stop: () => void;
+};
+
+type ExtendedCapabilities = MediaTrackCapabilities & {
+  torch?: boolean;
+  focusMode?: string[];
   zoom?: {
     min?: number;
     max?: number;
     step?: number;
   };
-  focusMode?: string[];
+};
+
+type ExtendedSettings = MediaTrackSettings & {
+  zoom?: number;
+};
+
+type ExtendedConstraintSet = MediaTrackConstraintSet & {
   torch?: boolean;
-};
-
-type CameraSettings = MediaTrackSettings & {
-  zoom?: number;
-};
-
-type CameraConstraint = MediaTrackConstraintSet & {
-  zoom?: number;
   focusMode?: string;
-  torch?: boolean;
+  zoom?: number;
 };
 
 function extractUuid(value: string): string {
@@ -55,11 +66,51 @@ function extractUuid(value: string): string {
     /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i
   );
 
-  return uuidMatch ? uuidMatch[0] : cleanedValue;
+  return uuidMatch?.[0] ?? cleanedValue;
+}
+
+function getCameraErrorMessage(error: unknown): string {
+  const raw =
+    error instanceof Error ? error.message : String(error ?? "");
+
+  const message = raw.toLowerCase();
+
+  if (
+    message.includes("notallowed") ||
+    message.includes("permission") ||
+    message.includes("denied")
+  ) {
+    return "Camera access was denied. Allow camera permission for ServePass and reload the page.";
+  }
+
+  if (
+    message.includes("notreadable") ||
+    message.includes("could not start video") ||
+    message.includes("trackstart") ||
+    message.includes("video source")
+  ) {
+    return "The camera is busy or unavailable. Close Camera, WhatsApp, Instagram and other camera apps, then reload ServePass.";
+  }
+
+  if (
+    message.includes("notfound") ||
+    message.includes("device not found")
+  ) {
+    return "No usable camera was found on this device.";
+  }
+
+  if (
+    message.includes("overconstrained") ||
+    message.includes("constraint")
+  ) {
+    return "The selected camera settings are unsupported on this device.";
+  }
+
+  return raw || "Unable to start the camera.";
 }
 
 function playScannerSound(
-  sound: "VALID" | "USED" | "REJECTED"
+  type: "VALID" | "USED" | "REJECTED"
 ) {
   try {
     const AudioContextClass =
@@ -74,12 +125,12 @@ function playScannerSound(
 
     const audioContext = new AudioContextClass();
 
-    function playTone(
+    const playTone = (
       frequency: number,
       duration: number,
       delay = 0,
       oscillatorType: OscillatorType = "square"
-    ) {
+    ) => {
       const oscillator = audioContext.createOscillator();
       const gain = audioContext.createGain();
 
@@ -103,79 +154,45 @@ function playScannerSound(
 
       oscillator.start(startTime);
       oscillator.stop(endTime);
-    }
+    };
 
     void audioContext.resume();
 
-    if (sound === "VALID") {
-      playTone(1450, 0.16);
-      playTone(1800, 0.18, 0.17);
+    if (type === "VALID") {
+      playTone(1400, 0.16);
+      playTone(1850, 0.18, 0.17);
     }
 
-    if (sound === "USED") {
-      playTone(850, 0.16);
-      playTone(850, 0.16, 0.22);
-      playTone(850, 0.16, 0.44);
+    if (type === "USED") {
+      playTone(800, 0.16);
+      playTone(800, 0.16, 0.22);
+      playTone(800, 0.16, 0.44);
     }
 
-    if (sound === "REJECTED") {
-      playTone(220, 0.65, 0, "sawtooth");
+    if (type === "REJECTED") {
+      playTone(210, 0.7, 0, "sawtooth");
     }
 
     window.setTimeout(() => {
       void audioContext.close();
-    }, 1500);
+    }, 1600);
   } catch (error) {
     console.warn("Unable to play scanner sound:", error);
   }
 }
 
-function getFriendlyCameraError(error: unknown): string {
-  const rawMessage =
-    error instanceof Error
-      ? error.message
-      : String(error || "");
-
-  const message = rawMessage.toLowerCase();
-
-  if (
-    message.includes("permission") ||
-    message.includes("notallowederror")
-  ) {
-    return "Camera permission was denied. Allow camera access in your browser settings and reload the page.";
-  }
-
-  if (
-    message.includes("could not start video source") ||
-    message.includes("notreadableerror") ||
-    message.includes("track start")
-  ) {
-    return "The camera is currently unavailable. Close Camera, WhatsApp, Instagram or any app using the camera, then reload ServePass.";
-  }
-
-  if (
-    message.includes("notfounderror") ||
-    message.includes("requested device not found")
-  ) {
-    return "No usable camera was found on this device.";
-  }
-
-  if (
-    message.includes("facingmode") ||
-    message.includes("overconstrained")
-  ) {
-    return "The rear camera could not be selected. Reload the page and try again.";
-  }
-
-  return rawMessage || "Unable to start camera.";
-}
-
 export default function QRVerifier() {
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const readerRef = useRef<BrowserQRCodeReader | null>(null);
+  const controlsRef = useRef<ScannerControls | null>(null);
   const processingRef = useRef(false);
 
   const [scanning, setScanning] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [processingImage, setProcessingImage] =
+    useState(false);
 
   const [status, setStatus] =
     useState<VerificationStatus>("idle");
@@ -183,7 +200,7 @@ export default function QRVerifier() {
   const [result, setResult] = useState<any>(null);
 
   const [message, setMessage] = useState(
-    "Position the complete printed QR code inside the scanner frame."
+    "Start the scanner and place the full printed QR code inside the frame."
   );
 
   const [torchSupported, setTorchSupported] =
@@ -200,116 +217,130 @@ export default function QRVerifier() {
   const [maximumZoom, setMaximumZoom] = useState(1);
   const [zoomStep, setZoomStep] = useState(0.25);
 
-  async function stopScanner() {
-    const scanner = scannerRef.current;
+  function getVideoTrack(): MediaStreamTrack | null {
+    const stream = videoRef.current
+      ?.srcObject as MediaStream | null;
 
-    if (!scanner) {
-      setScanning(false);
-      setStarting(false);
-      return;
-    }
+    return stream?.getVideoTracks()?.[0] ?? null;
+  }
 
+  const stopScanner = useCallback(() => {
     try {
-      if (scanner.isScanning) {
-        await scanner.stop();
-      }
+      controlsRef.current?.stop();
     } catch (error) {
-      console.warn("Scanner stop warning:", error);
+      console.warn("ZXing stop warning:", error);
     }
 
-    try {
-      scanner.clear();
-    } catch (error) {
-      console.warn("Scanner clear warning:", error);
-    }
+    controlsRef.current = null;
 
-    scannerRef.current = null;
-    processingRef.current = false;
+    const video = videoRef.current;
+    const stream = video?.srcObject as MediaStream | null;
+
+    stream?.getTracks().forEach((track) => {
+      track.stop();
+    });
+
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+    }
 
     setScanning(false);
     setStarting(false);
     setTorchEnabled(false);
     setTorchSupported(false);
     setZoomSupported(false);
-  }
+  }, []);
 
-  async function applyCameraEnhancements(
-    scanner: Html5Qrcode
-  ) {
+  useEffect(() => {
+    return () => {
+      stopScanner();
+      readerRef.current = null;
+    };
+  }, [stopScanner]);
+
+  async function inspectCameraCapabilities() {
+    const track = getVideoTrack();
+
+    if (!track) return;
+
     try {
       const capabilities =
-        scanner.getRunningTrackCapabilities() as CameraCapabilities;
+        track.getCapabilities() as ExtendedCapabilities;
 
       const settings =
-        scanner.getRunningTrackSettings() as CameraSettings;
+        track.getSettings() as ExtendedSettings;
 
-      const advancedConstraint: CameraConstraint = {};
-
-      if (
-        Array.isArray(capabilities.focusMode) &&
-        capabilities.focusMode.includes("continuous")
-      ) {
-        advancedConstraint.focusMode = "continuous";
+      if (capabilities.torch === true) {
+        setTorchSupported(true);
       }
 
       if (capabilities.zoom) {
         const min = Number(capabilities.zoom.min ?? 1);
         const max = Number(capabilities.zoom.max ?? 1);
-        const step = Number(
-          capabilities.zoom.step ?? 0.25
-        );
+        const step = Number(capabilities.zoom.step ?? 0.25);
 
         setMinimumZoom(min);
         setMaximumZoom(max);
         setZoomStep(step > 0 ? step : 0.25);
         setZoomSupported(max > min);
 
-        const currentZoom = Number(
-          settings.zoom ?? min
-        );
+        const currentZoom = Number(settings.zoom ?? min);
+        setZoom(currentZoom);
 
+        /*
+         * Apply only gentle zoom. Excessive digital zoom
+         * can make an already-small printed QR less sharp.
+         */
         const preferredZoom = Math.min(
           max,
-          Math.max(min, currentZoom, 1.25)
+          Math.max(min, currentZoom, 1.15)
         );
 
-        advancedConstraint.zoom = preferredZoom;
-        setZoom(preferredZoom);
-      }
+        if (preferredZoom !== currentZoom) {
+          await track.applyConstraints({
+            advanced: [
+              {
+                zoom: preferredZoom,
+              } as ExtendedConstraintSet,
+            ],
+          });
 
-      if (capabilities.torch === true) {
-        setTorchSupported(true);
+          setZoom(preferredZoom);
+        }
       }
 
       if (
-        Object.keys(advancedConstraint).length > 0
+        Array.isArray(capabilities.focusMode) &&
+        capabilities.focusMode.includes("continuous")
       ) {
-        await scanner.applyVideoConstraints({
+        await track.applyConstraints({
           advanced: [
-            advancedConstraint as MediaTrackConstraintSet,
+            {
+              focusMode: "continuous",
+            } as ExtendedConstraintSet,
           ],
         });
       }
     } catch (error) {
       console.warn(
-        "Camera enhancements are unavailable:",
+        "Camera focus, zoom or torch controls are unavailable:",
         error
       );
     }
   }
 
-  async function verifyScannedValue(
-    decodedText: string
-  ) {
+  async function handleDecodedValue(decodedValue: string) {
     if (processingRef.current) return;
 
     processingRef.current = true;
+    stopScanner();
 
-    const ticketUuid = extractUuid(decodedText);
-
-    await stopScanner();
+    const ticketUuid = extractUuid(decodedValue);
 
     try {
+      setMessage("Checking ticket...");
+
       const data = await verifyTicket(ticketUuid);
 
       setResult(data);
@@ -350,100 +381,76 @@ export default function QRVerifier() {
   async function startScanner() {
     if (starting || scanning) return;
 
+    const videoElement = videoRef.current;
+
+    if (!videoElement) {
+      toast.error("Scanner video is not ready");
+      return;
+    }
+
     try {
-      await stopScanner();
+      stopScanner();
 
       setStarting(true);
-      setResult(null);
       setStatus("idle");
-      setMessage("Starting rear camera...");
+      setResult(null);
+      setMessage("Starting the rear camera...");
 
-      const scanner = new Html5Qrcode(
-        "qr-reader",
-        {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.QR_CODE,
-          ],
-          verbose: false,
-        }
-      );
+      const reader = new BrowserQRCodeReader();
+      readerRef.current = reader;
 
-      scannerRef.current = scanner;
-
-      /*
-       * Your installed html5-qrcode version accepts
-       * either a string or an object containing `exact`.
-       */
-      await scanner.start(
-        {
+      const constraints: MediaStreamConstraints = {
+        audio: false,
+        video: {
           facingMode: {
-            exact: "environment",
+            ideal: "environment",
+          },
+          width: {
+            ideal: 1920,
+          },
+          height: {
+            ideal: 1080,
+          },
+          frameRate: {
+            ideal: 24,
+            max: 30,
           },
         },
-        {
-          /*
-           * Lower decoding FPS gives the phone camera
-           * more time to focus on the small printed QR.
-           */
-          fps: 6,
+      };
 
-          /*
-           * A large scan region provides more QR pixels.
-           */
-          qrbox: (
-            viewfinderWidth: number,
-            viewfinderHeight: number
-          ) => {
-            const smallestSide = Math.min(
-              viewfinderWidth,
-              viewfinderHeight
-            );
+      const controls = await reader.decodeFromConstraints(
+        constraints,
+        videoElement,
+        (decodedResult) => {
+          if (!decodedResult || processingRef.current) return;
 
-            const size = Math.floor(
-              smallestSide * 0.86
-            );
+          const decodedText = decodedResult.getText();
 
-            return {
-              width: size,
-              height: size,
-            };
-          },
-
-          disableFlip: true,
-        },
-        async (decodedText) => {
-          await verifyScannedValue(decodedText);
-        },
-        () => {
-          // Decode misses are normal while the camera focuses.
+          if (decodedText) {
+            void handleDecodedValue(decodedText);
+          }
         }
       );
 
+      controlsRef.current = controls;
       setScanning(true);
       setStarting(false);
 
       setMessage(
-        "Hold the armband steady. Begin slightly farther away and move closer slowly until the QR is sharp."
+        "Hold the armband steady. Start farther away, then move closer slowly until the QR becomes sharp."
       );
 
       window.setTimeout(() => {
-        if (
-          scannerRef.current === scanner &&
-          scanner.isScanning
-        ) {
-          void applyCameraEnhancements(scanner);
-        }
-      }, 1000);
+        void inspectCameraCapabilities();
+      }, 900);
     } catch (error) {
-      console.error("Scanner start failed:", error);
+      console.error("ZXing camera start failed:", error);
+
+      stopScanner();
 
       const friendlyMessage =
-        getFriendlyCameraError(error);
+        getCameraErrorMessage(error);
 
-      scannerRef.current = null;
-
-      setScanning(false);
-      setStarting(false);
       setStatus("error");
       setMessage(friendlyMessage);
 
@@ -453,11 +460,9 @@ export default function QRVerifier() {
   }
 
   async function changeZoom(nextZoom: number) {
-    const scanner = scannerRef.current;
+    const track = getVideoTrack();
 
-    if (!scanner || !scanner.isScanning) {
-      return;
-    }
+    if (!track || !zoomSupported) return;
 
     const safeZoom = Math.min(
       maximumZoom,
@@ -465,94 +470,78 @@ export default function QRVerifier() {
     );
 
     try {
-      await scanner.applyVideoConstraints({
+      await track.applyConstraints({
         advanced: [
           {
             zoom: safeZoom,
-          } as CameraConstraint,
+          } as ExtendedConstraintSet,
         ],
       });
 
       setZoom(safeZoom);
     } catch (error) {
-      console.warn("Zoom failed:", error);
-      toast.error(
-        "Zoom control is unavailable on this device"
-      );
+      console.warn("Camera zoom failed:", error);
+      toast.error("Zoom is unavailable on this phone");
     }
   }
 
   async function toggleTorch() {
-    const scanner = scannerRef.current;
+    const track = getVideoTrack();
 
-    if (
-      !scanner ||
-      !scanner.isScanning ||
-      !torchSupported
-    ) {
-      return;
-    }
+    if (!track || !torchSupported) return;
 
-    const nextTorchState = !torchEnabled;
+    const nextState = !torchEnabled;
 
     try {
-      await scanner.applyVideoConstraints({
+      await track.applyConstraints({
         advanced: [
           {
-            torch: nextTorchState,
-          } as CameraConstraint,
+            torch: nextState,
+          } as ExtendedConstraintSet,
         ],
       });
 
-      setTorchEnabled(nextTorchState);
+      setTorchEnabled(nextState);
     } catch (error) {
-      console.warn("Torch failed:", error);
-      toast.error(
-        "Torch control is unavailable on this device"
-      );
+      console.warn("Torch control failed:", error);
+      toast.error("Torch is unavailable on this phone");
     }
   }
 
   async function refocusCamera() {
-    const scanner = scannerRef.current;
+    const track = getVideoTrack();
 
-    if (!scanner || !scanner.isScanning) {
-      return;
-    }
+    if (!track) return;
 
     try {
       const capabilities =
-        scanner.getRunningTrackCapabilities() as CameraCapabilities;
+        track.getCapabilities() as ExtendedCapabilities;
 
       if (
         Array.isArray(capabilities.focusMode) &&
         capabilities.focusMode.includes("single-shot")
       ) {
-        await scanner.applyVideoConstraints({
+        await track.applyConstraints({
           advanced: [
             {
               focusMode: "single-shot",
-            } as CameraConstraint,
+            } as ExtendedConstraintSet,
           ],
         });
 
         window.setTimeout(() => {
           if (
-            scannerRef.current === scanner &&
-            scanner.isScanning &&
-            capabilities.focusMode?.includes(
-              "continuous"
-            )
+            capabilities.focusMode?.includes("continuous")
           ) {
-            void scanner.applyVideoConstraints({
+            void track.applyConstraints({
               advanced: [
                 {
                   focusMode: "continuous",
-                } as CameraConstraint,
+                } as ExtendedConstraintSet,
               ],
             });
           }
-        }, 700);
+        }, 650);
 
         toast.success("Camera refocused");
         return;
@@ -577,14 +566,63 @@ export default function QRVerifier() {
       }
 
       toast(
-        "Move the phone farther away, then approach the QR slowly"
+        "Move the phone away slightly, then approach the QR slowly"
       );
     } catch (error) {
       console.warn("Refocus failed:", error);
 
       toast(
-        "Move the phone farther away, then approach the QR slowly"
+        "Move the phone away slightly, then approach the QR slowly"
       );
+    }
+  }
+
+  async function scanUploadedImage(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+
+    event.target.value = "";
+
+    if (!file || processingImage) return;
+
+    let objectUrl = "";
+
+    try {
+      setProcessingImage(true);
+      setStatus("idle");
+      setResult(null);
+      setMessage("Reading QR code from image...");
+
+      stopScanner();
+
+      objectUrl = URL.createObjectURL(file);
+
+      const reader =
+        readerRef.current ?? new BrowserQRCodeReader();
+
+      readerRef.current = reader;
+
+      const decodedResult =
+        await reader.decodeFromImageUrl(objectUrl);
+
+      await handleDecodedValue(decodedResult.getText());
+    } catch (error) {
+      console.error("Image QR decoding failed:", error);
+
+      setStatus("error");
+      setMessage(
+        "No readable QR code was found in that image. Retake the photo closer and keep the QR square."
+      );
+
+      playScannerSound("REJECTED");
+      toast.error("No readable QR code found");
+    } finally {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+
+      setProcessingImage(false);
     }
   }
 
@@ -600,44 +638,48 @@ export default function QRVerifier() {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
       <Card className="overflow-hidden p-4 sm:p-5">
-        <div className="relative overflow-hidden rounded-3xl bg-black">
-          <div
-            id="qr-reader"
-            className="min-h-[390px] w-full bg-black"
+        <div className="relative min-h-[390px] overflow-hidden rounded-3xl bg-slate-950">
+          <video
+            ref={videoRef}
+            muted
+            playsInline
+            autoPlay
+            className={`h-full min-h-[390px] w-full object-cover ${
+              scanning ? "block" : "hidden"
+            }`}
           />
 
           {!scanning && (
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-slate-950 px-6 text-center text-white">
+            <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center text-white">
               <div className="rounded-full bg-white/10 p-5">
-                <Camera size={38} />
+                <Camera size={40} />
               </div>
 
-              <p className="mt-5 text-lg font-black">
+              <h2 className="mt-5 text-xl font-black">
                 Scanner is ready
-              </p>
+              </h2>
 
-              <p className="mt-2 max-w-xs text-sm leading-6 text-white/70">
-                Start the rear camera, then place the
-                complete printed QR code inside the frame.
+              <p className="mt-2 max-w-sm text-sm leading-6 text-white/65">
+                Start the rear camera and place the complete
+                printed QR inside the frame.
               </p>
             </div>
           )}
 
           {scanning && (
             <div className="pointer-events-none absolute inset-0">
-              <div className="absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2">
+              <div className="absolute left-1/2 top-1/2 h-[82%] w-[82%] -translate-x-1/2 -translate-y-1/2">
                 <span className="absolute left-0 top-0 h-14 w-14 border-l-4 border-t-4 border-white" />
-
                 <span className="absolute right-0 top-0 h-14 w-14 border-r-4 border-t-4 border-white" />
-
                 <span className="absolute bottom-0 left-0 h-14 w-14 border-b-4 border-l-4 border-white" />
-
                 <span className="absolute bottom-0 right-0 h-14 w-14 border-b-4 border-r-4 border-white" />
+
+                <div className="absolute left-1/2 top-1/2 h-px w-[92%] -translate-x-1/2 bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.9)]" />
               </div>
 
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur">
-                Keep the full QR inside the frame
-              </div>
+              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur">
+                Hold the QR steady
+              </p>
             </div>
           )}
         </div>
@@ -702,31 +744,67 @@ export default function QRVerifier() {
           </div>
         )}
 
-        <div className="mt-5 flex gap-3">
-          <Button
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
             onClick={startScanner}
             disabled={scanning || starting}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-green-600 px-5 py-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="flex items-center justify-center gap-2">
+            {starting ? (
+              <Loader2
+                size={18}
+                className="animate-spin"
+              />
+            ) : (
               <ScanLine size={18} />
+            )}
 
-              {starting
-                ? "Starting camera..."
-                : scanning
-                  ? "Scanner active"
-                  : "Start Scanner"}
-            </span>
-          </Button>
+            {starting
+              ? "Starting..."
+              : scanning
+                ? "Scanner active"
+                : "Start Scanner"}
+          </button>
 
           <button
             type="button"
             onClick={stopScanner}
             disabled={!scanning && !starting}
-            className="flex min-w-28 items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 text-sm font-bold text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-4 text-sm font-black text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Square size={16} />
             Stop
           </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              fileInputRef.current?.click()
+            }
+            disabled={processingImage}
+            className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-4 text-sm font-black text-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {processingImage ? (
+              <Loader2
+                size={18}
+                className="animate-spin"
+              />
+            ) : (
+              <ImagePlus size={18} />
+            )}
+
+            Scan Photo
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={scanUploadedImage}
+          />
         </div>
       </Card>
 
@@ -739,19 +817,28 @@ export default function QRVerifier() {
 
         {status === "idle" && (
           <div className="mt-5">
-            <h2 className="text-3xl font-black text-gray-950">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+              <ScanLine size={28} />
+            </div>
+
+            <h2 className="mt-5 text-3xl font-black text-gray-950">
               Ready to scan
             </h2>
 
             <p className="mt-3 text-sm leading-6 text-gray-600">
-              Begin approximately 20–30 cm away from
-              the printed armband and approach it slowly.
+              Begin around 20–30 cm from the armband,
+              keep it flat and approach slowly.
             </p>
           </div>
         )}
 
         {status === "success" && (
           <div className="mt-5 space-y-3">
+            <CheckCircle2
+              size={48}
+              className="text-green-700"
+            />
+
             <h2 className="text-4xl font-black text-green-700">
               Verified
             </h2>
@@ -776,6 +863,11 @@ export default function QRVerifier() {
 
         {status === "used" && (
           <div className="mt-5 space-y-3">
+            <TriangleAlert
+              size={48}
+              className="text-amber-700"
+            />
+
             <h2 className="text-4xl font-black text-amber-700">
               Already Used
             </h2>
@@ -791,7 +883,7 @@ export default function QRVerifier() {
             </p>
 
             {result?.used_at && (
-              <p className="rounded-2xl bg-white/70 p-4 text-sm font-bold text-amber-900">
+              <p className="rounded-2xl bg-white/80 p-4 text-sm font-bold text-amber-900">
                 Used at: {result.used_at}
               </p>
             )}
@@ -800,6 +892,11 @@ export default function QRVerifier() {
 
         {status === "error" && (
           <div className="mt-5 space-y-3">
+            <XCircle
+              size={48}
+              className="text-red-700"
+            />
+
             <h2 className="text-4xl font-black text-red-700">
               Rejected
             </h2>
@@ -816,7 +913,7 @@ export default function QRVerifier() {
           disabled={scanning || starting}
           className="mt-8 flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-950 px-5 py-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <RotateCcw size={17} />
+          <RefreshCcw size={17} />
           Scan Next Ticket
         </button>
       </Card>
