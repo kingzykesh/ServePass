@@ -26,17 +26,28 @@ body {
 }
 
 
-#qr-reader video {
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 360px;
-  object-fit: cover !important;
-}
-
 #qr-reader {
   border: 0 !important;
 }
 
-#qr-reader img {
+#qr-reader video {
+  width: 100% !important;
+  min-height: 390px !important;
+  max-height: 560px !important;
+  object-fit: cover !important;
+  background: #000 !important;
+}
+
+#qr-reader__scan_region {
+  min-height: 390px !important;
+  background: #000 !important;
+}
+
+#qr-reader__dashboard,
+#qr-reader__dashboard_section {
+  display: none !important;
+}
+
+#qr-reader img[alt="Info icon"] {
   display: none !important;
 }
