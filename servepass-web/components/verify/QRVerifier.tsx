@@ -82,62 +82,123 @@ export default function QRVerifier() {
     setScanning(false);
   }
 
-  async function startScanner() {
-    try {
-      setResult(null);
-      setStatus("idle");
+async function startScanner() {
+  try {
+    setResult(null);
+    setStatus("idle");
 
-      const scanner = new Html5Qrcode("qr-reader");
-      scannerRef.current = scanner;
+    const scanner = new Html5Qrcode("qr-reader");
+    scannerRef.current = scanner;
 
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 260, height: 260 } },
-        async (decodedText) => {
-          await stopScanner();
+    await scanner.start(
+      {
+        facingMode: { exact: "environment" },
+      },
+      {
+        fps: 15,
+        qrbox: (viewfinderWidth, viewfinderHeight) => {
+          const size = Math.floor(
+            Math.min(viewfinderWidth, viewfinderHeight) * 0.82
+          );
 
-          const ticketUuid = extractUuid(decodedText);
-
-          try {
-            const data = await verifyTicket(ticketUuid);
-
-            setResult(data);
-            setStatus("success");
-            playScannerSound("VALID");
-            toast.success("Ticket verified");
-          } catch (err: any) {
-            const message =
-              err?.response?.data?.message ?? "Verification failed";
-
-            setResult(err?.response?.data?.data ?? null);
-            setStatus("error");
-
-            if (message.toLowerCase().includes("already used")) {
-              playScannerSound("USED");
-            } else {
-              playScannerSound("REJECTED");
-            }
-
-            toast.error(message);
-          }
+          return {
+            width: size,
+            height: size,
+          };
         },
-        () => {}
-      );
+        aspectRatio: 1,
+        disableFlip: true,
+        videoConstraints: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
+      },
+      async (decodedText) => {
+        await stopScanner();
 
-      setScanning(true);
-    } catch {
-      playScannerSound("REJECTED");
-      toast.error("Unable to start camera");
+        const ticketUuid = extractUuid(decodedText);
+
+        try {
+          const data = await verifyTicket(ticketUuid);
+
+          setResult(data);
+          setStatus("success");
+          playScannerSound("VALID");
+          toast.success("Ticket verified");
+        } catch (err: any) {
+          const message =
+            err?.response?.data?.message ?? "Verification failed";
+
+          setResult(err?.response?.data?.data ?? null);
+          setStatus("error");
+
+          if (message.toLowerCase().includes("already used")) {
+            playScannerSound("USED");
+          } else {
+            playScannerSound("REJECTED");
+          }
+
+          toast.error(message);
+        }
+      },
+      () => {}
+    );
+
+    setScanning(true);
+
+    // Apply autofocus and zoom only after the camera has started.
+    try {
+      const capabilities =
+        scanner.getRunningTrackCapabilities() as any;
+
+      const advancedConstraints: Record<string, unknown> = {};
+
+      if (Array.isArray(capabilities.focusMode)) {
+        if (capabilities.focusMode.includes("continuous")) {
+          advancedConstraints.focusMode = "continuous";
+        } else if (capabilities.focusMode.includes("single-shot")) {
+          advancedConstraints.focusMode = "single-shot";
+        }
+      }
+
+      if (capabilities.zoom) {
+        const minZoom = capabilities.zoom.min ?? 1;
+        const maxZoom = capabilities.zoom.max ?? 1;
+
+        // Mild zoom improves small printed QR recognition.
+        advancedConstraints.zoom = Math.min(
+          Math.max(1.5, minZoom),
+          maxZoom
+        );
+      }
+
+      if (Object.keys(advancedConstraints).length > 0) {
+        await scanner.applyVideoConstraints({
+          advanced: [advancedConstraints],
+        } as MediaTrackConstraints);
+      }
+    } catch (constraintError) {
+      console.warn(
+        "Camera focus/zoom constraints are unsupported:",
+        constraintError
+      );
     }
+  } catch (error) {
+    console.error(error);
+    playScannerSound("REJECTED");
+    toast.error("Unable to start camera");
   }
+}
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_0.8fr]">
       <Card className="p-5">
         <div
-          id="qr-reader"
-          className="min-h-[320px] overflow-hidden rounded-3xl bg-slate-100"
-        />
+  id="qr-reader"
+  className="min-h-[360px] w-full overflow-hidden rounded-3xl bg-black"
+/>
 
         <div className="mt-5 flex gap-3">
           <Button onClick={startScanner} disabled={scanning}>

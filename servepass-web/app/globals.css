@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+#qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 360px;
+  object-fit: cover !important;
+}
+
+#qr-reader {
+  border: 0 !important;
+}
+
+#qr-reader img {
+  display: none !important;
+}
