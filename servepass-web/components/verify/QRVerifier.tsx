@@ -315,13 +315,11 @@ export default function QRVerifier() {
       });
 
       scannerRef.current = scanner;
-
-      await scanner.start(
-        {
-          facingMode: {
-            ideal: "environment",
-          },
-        },
+      
+await scanner.start(
+  {
+    facingMode: "environment",
+  },
         {
           /*
            * Lower FPS gives autofocus more time to settle
